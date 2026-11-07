@@ -18,6 +18,8 @@
       </svg>
     </a>
     <h1>One Video</h1>
+    <button id="version" type="button" class="version" data-state="checking" aria-label="Checking for updates…"><i></i><span></span></button>
+    <button id="change-btn" type="button" class="change-btn" hidden>Change video</button>
   </header>
 
   <main>
@@ -31,15 +33,14 @@
 
     <p id="empty" class="empty">No video saved yet. Paste a YouTube URL below.</p>
 
-    <form id="url-form" class="dock">
+    <form id="url-form" class="dock" hidden>
       <input id="url-input" type="url" inputmode="url" autocomplete="off"
         placeholder="Paste a YouTube URL…" aria-label="YouTube URL">
       <button type="submit">Save</button>
-      <button type="button" id="clear-btn" hidden>Clear</button>
     </form>
     <p id="error" class="error" hidden></p>
   </main>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

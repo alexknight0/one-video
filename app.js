@@ -1,4 +1,4 @@
-"use strict";
+import { VERSION } from "./version.js";
 
 // Persist the saved video id in both a cookie (as requested) and localStorage
 // (cookies are not sent/readable on the file:// origin and can be flaky on
@@ -12,16 +12,17 @@ const player = document.getElementById("player");
 const empty = document.getElementById("empty");
 const form = document.getElementById("url-form");
 const input = document.getElementById("url-input");
-const clearBtn = document.getElementById("clear-btn");
+const changeBtn = document.getElementById("change-btn");
 const errorEl = document.getElementById("error");
+
+const ID_RE = /^[A-Za-z0-9_-]{11}$/;
 
 // Extract an 11-char YouTube video id from the many URL shapes, or a bare id.
 function parseVideoId(raw) {
   const text = (raw || "").trim();
   if (!text) return null;
 
-  const idRe = /^[A-Za-z0-9_-]{11}$/;
-  if (idRe.test(text)) return text;
+  if (ID_RE.test(text)) return text;
 
   let url;
   try {
@@ -35,12 +36,12 @@ function parseVideoId(raw) {
 
   if (host === "youtu.be") {
     const id = url.pathname.split("/").filter(Boolean)[0];
-    return id && idRe.test(id) ? id : null;
+    return id && ID_RE.test(id) ? id : null;
   }
 
   if (ytHosts.includes(host)) {
     const v = url.searchParams.get("v");
-    if (v && idRe.test(v)) return v;
+    if (v && ID_RE.test(v)) return v;
     // /embed/ID, /shorts/ID, /live/ID, /v/ID
     const m = url.pathname.match(/\/(?:embed|shorts|live|v)\/([A-Za-z0-9_-]{11})/);
     if (m) return m[1];
@@ -51,9 +52,6 @@ function parseVideoId(raw) {
 
 function setCookie(id) {
   document.cookie = `${COOKIE_NAME}=${encodeURIComponent(id)}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
-}
-function clearCookie() {
-  document.cookie = `${COOKIE_NAME}=; max-age=0; path=/; SameSite=Lax`;
 }
 function readCookie() {
   const match = document.cookie.match(new RegExp("(?:^|; )" + COOKIE_NAME + "=([^;]*)"));
@@ -66,29 +64,40 @@ function saveId(id) {
 }
 function loadId() {
   const fromCookie = readCookie();
-  if (fromCookie && /^[A-Za-z0-9_-]{11}$/.test(fromCookie)) return fromCookie;
+  if (fromCookie && ID_RE.test(fromCookie)) return fromCookie;
   try {
     const fromStorage = localStorage.getItem(STORAGE_KEY);
-    if (fromStorage && /^[A-Za-z0-9_-]{11}$/.test(fromStorage)) return fromStorage;
+    if (fromStorage && ID_RE.test(fromStorage)) return fromStorage;
   } catch {}
   return null;
 }
-function clearId() {
-  clearCookie();
-  try { localStorage.removeItem(STORAGE_KEY); } catch {}
-}
 
-function showVideo(id) {
-  player.src = `https://www.youtube-nocookie.com/embed/${id}`;
+// Autoplay the saved video and hide the URL entry; show "Change video" in the header.
+function showVideo(id, { autoplay } = {}) {
+  const params = new URLSearchParams({
+    autoplay: autoplay ? "1" : "0",
+    // mute lets autoplay start without a user gesture (browsers block unmuted autoplay)
+    mute: autoplay ? "1" : "0",
+    rel: "0",
+    playsinline: "1",
+  });
+  player.src = `https://www.youtube-nocookie.com/embed/${id}?${params}`;
   playerWrap.hidden = false;
   empty.hidden = true;
-  clearBtn.hidden = false;
+  form.hidden = true;
+  changeBtn.hidden = false;
+  clearError();
 }
-function showEmpty() {
+
+// Show the URL entry (either no video yet, or the user pressed "Change video").
+function showEntry() {
   player.src = "";
   playerWrap.hidden = true;
   empty.hidden = false;
-  clearBtn.hidden = true;
+  form.hidden = false;
+  changeBtn.hidden = true;
+  input.value = "";
+  clearError();
 }
 
 function showError(msg) {
@@ -109,21 +118,33 @@ form.addEventListener("submit", (e) => {
     return;
   }
   saveId(id);
-  showVideo(id);
-  input.value = "";
+  // Just-saved video: autoplay so pressing Save starts it immediately.
+  showVideo(id, { autoplay: true });
   input.blur();
 });
 
-clearBtn.addEventListener("click", () => {
-  clearId();
-  showEmpty();
-  clearError();
-});
+changeBtn.addEventListener("click", showEntry);
 
-// Restore the saved video on load.
+// Restore the saved video on load and autoplay it.
 const saved = loadId();
 if (saved) {
-  showVideo(saved);
+  showVideo(saved, { autoplay: true });
 } else {
-  showEmpty();
+  showEntry();
 }
+
+// Version check: the update light is shared by Alex's Pages sites
+// (github.com/alexknight0/pages-common). Loaded dynamically so the site still works if
+// jsDelivr is unreachable.
+import("https://cdn.jsdelivr.net/gh/alexknight0/pages-common@1.0.0/update.js")
+  .then(({ initUpdateLight }) => initUpdateLight({
+    version: VERSION,
+    buttons: "#version",
+  }))
+  .catch((e) => {
+    console.warn("update light:", e);
+    for (const b of document.querySelectorAll(".version")) {
+      b.dataset.state = "unknown";
+      b.title = "Couldn't load the update check (offline?).";
+    }
+  });
