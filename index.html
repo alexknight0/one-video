@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0f0f0f">
+  <title>One Video</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <a class="home-link" href="../home/" aria-label="Home">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+        <path d="M3 11.5 12 4l9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M5 10v9h5v-5h4v5h5v-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+    <h1>One Video</h1>
+  </header>
+
+  <main>
+    <div id="player-wrap" hidden>
+      <div class="ratio">
+        <iframe id="player" src="" title="Video player"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      </div>
+    </div>
+
+    <p id="empty" class="empty">No video saved yet. Paste a YouTube URL below.</p>
+
+    <form id="url-form" class="dock">
+      <input id="url-input" type="url" inputmode="url" autocomplete="off"
+        placeholder="Paste a YouTube URL…" aria-label="YouTube URL">
+      <button type="submit">Save</button>
+      <button type="button" id="clear-btn" hidden>Clear</button>
+    </form>
+    <p id="error" class="error" hidden></p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
