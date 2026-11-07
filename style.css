@@ -51,21 +51,33 @@ main {
   flex-direction: column;
   padding: 16px;
   gap: 16px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-#player-wrap { width: 100%; }
+/* The player fills the leftover space between header and input dock without
+   ever overflowing. #player-wrap is the flexible region (it shrinks/grows with
+   the viewport). The .ratio box keeps 16:9 and is sized to the largest 16:9
+   rectangle that fits inside that region: its width is the smaller of the
+   region's full width and the width implied by the region's height (height*16/9).
+   That way it scales up on wide screens and never exceeds the screen height. */
+#player-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .ratio {
-  position: relative;
-  width: 100%;
-  padding-top: 56.25%;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
+  aspect-ratio: 16 / 9;
+  width: min(100%, calc((100cqh) * 16 / 9));
+  max-height: 100%;
 }
+#player-wrap { container-type: size; }
 .ratio iframe {
-  position: absolute;
-  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   border: 0;
