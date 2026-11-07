@@ -76,8 +76,6 @@ function loadId() {
 function showVideo(id, { autoplay } = {}) {
   const params = new URLSearchParams({
     autoplay: autoplay ? "1" : "0",
-    // mute lets autoplay start without a user gesture (browsers block unmuted autoplay)
-    mute: autoplay ? "1" : "0",
     rel: "0",
     playsinline: "1",
   });
