@@ -150,11 +150,12 @@ main {
 
 .dock {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: auto;
 }
 .dock input {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
   padding: 12px 14px;
   font-size: 1rem;
@@ -164,7 +165,11 @@ main {
   color: var(--fg);
 }
 .dock input:focus { outline: none; border-color: var(--accent); }
+.dock input.time {
+  flex: 1 1 7rem;
+}
 .dock button {
+  flex: 1 1 auto;
   padding: 12px 18px;
   font-size: 1rem;
   border: 0;
