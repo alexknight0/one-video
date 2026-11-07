@@ -9,20 +9,23 @@ import {
   collection, getDocs, writeBatch, Bytes,
 } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
+// Shares the lecture player's Firebase project (Blaze plan, so storage past the free 1 GiB is
+// billed instead of refused). One Video's data lives under oneVideo/ in its Firestore; the rules
+// for it are in ~/projects/lecture-player/firestore.rules.
 const firebaseConfig = {
-  apiKey: "AIzaSyCWkYvty0RjkOdq5xJNuOtAWH9Xa9p5uvE",
-  authDomain: "one-video-37c315.firebaseapp.com",
-  projectId: "one-video-37c315",
-  storageBucket: "one-video-37c315.firebasestorage.app",
-  messagingSenderId: "121219978533",
-  appId: "1:121219978533:web:4da006f8ec8efa7f1eb6cc",
+  apiKey: "AIzaSyDgEbqEwI9KHnFlBLRJ8RQIgdntISQPty0",
+  authDomain: "lecture-player-d77815.firebaseapp.com",
+  projectId: "lecture-player-d77815",
+  appId: "1:905522641482:web:f737cbe4b19eeead1a04b3",
 };
 
 // Firestore caps a document at 1 MiB; keep a safe margin for the field overhead.
 const CHUNK_BYTES = 900_000;
-const VIDEO_DOC = ["video", "current"]; // the single saved video
+const VIDEO_DOC = ["oneVideo", "current"]; // the single saved video
 
-const app = initializeApp(firebaseConfig);
+// A named app keeps this sign-in separate from the lecture player's (same project and API key,
+// same origin), so signing out here doesn't sign the lecture player out.
+const app = initializeApp(firebaseConfig, "one-video");
 const auth = initializeAuth(app, {
   persistence: browserLocalPersistence,
   popupRedirectResolver: browserPopupRedirectResolver,
@@ -51,6 +54,7 @@ const errorEl = document.getElementById("error");
 
 let currentBlobUrl = null; // object URL of the playing blob, revoked when replaced
 let busy = false;          // uploading or downloading
+let isOwner = false;       // Alex: may change the video. Others on the watch list only watch it.
 
 // --- time helpers (same as before) ---
 function parseTime(raw) {
@@ -103,7 +107,7 @@ function showPlayer(blobUrl, startSeconds) {
   playerWrap.hidden = false;
   empty.hidden = true;
   form.hidden = true;
-  changeBtn.hidden = false;
+  changeBtn.hidden = !isOwner;
   // Autoplay on open (unmuted; browsers may need a tap to start the sound).
   player.play().catch(() => {});
   clearError();
@@ -265,12 +269,50 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 // --- auth flow ---
-async function onSignedIn() {
+// Watchers (config/access.emails, edited on Home's Access page) only see the video. Nothing in
+// the app says who is on that list: the Firestore rules answer, with permission-denied.
+function showWatcherEmpty(text) {
+  player.removeAttribute("src");
+  playerWrap.hidden = true;
+  form.hidden = true;
+  changeBtn.hidden = true;
+  empty.hidden = false;
+  empty.textContent = text;
+}
+
+function showNotAllowed(user) {
+  boot.hidden = true;
+  appEl.hidden = true;
+  gate.hidden = false;
+  gateMsg.textContent = `${user.email} can't use One Video. Sign out and use an account that's been given access.`;
+  signinBtn.textContent = "Sign out";
+  signinBtn.onclick = () => signOut(auth);
+}
+
+async function onSignedIn(user) {
+  let saved;
+  try {
+    saved = await loadSavedVideo();
+  } catch (err) {
+    if (err?.code === "permission-denied") { showNotAllowed(user); return; }
+    saved = err;
+  }
   boot.hidden = true;
   gate.hidden = true;
   appEl.hidden = false;
+  if (!isOwner) {
+    if (saved instanceof Error) { showWatcherEmpty("Couldn't load the video: " + (saved.message || saved)); return; }
+    if (!saved || saved.incomplete) { showWatcherEmpty("There's no video to watch yet."); return; }
+    try {
+      showPlayer(URL.createObjectURL(await downloadVideo(saved.meta)), saved.meta.startSeconds || 0);
+    } catch (err) {
+      console.error(err);
+      showError("Couldn't load the video: " + (err?.message || err));
+    }
+    return;
+  }
   try {
-    const saved = await loadSavedVideo();
+    if (saved instanceof Error) throw saved;
     if (saved && !saved.incomplete) {
       const blob = await downloadVideo(saved.meta);
       showPlayer(URL.createObjectURL(blob), saved.meta.startSeconds || 0);
@@ -289,16 +331,9 @@ async function onSignedIn() {
 
 onAuthStateChanged(auth, (user) => {
   const email = user?.email?.toLowerCase();
-  if (user && user.emailVerified && email === "octopus0246@gmail.com") {
-    onSignedIn();
-  } else if (user) {
-    // Signed in with the wrong account.
-    boot.hidden = true;
-    appEl.hidden = true;
-    gate.hidden = false;
-    gateMsg.textContent = `${user.email} can't use One Video. Sign out and use the owner account.`;
-    signinBtn.textContent = "Sign out";
-    signinBtn.onclick = () => signOut(auth);
+  isOwner = Boolean(user && user.emailVerified && email === "octopus0246@gmail.com");
+  if (user) {
+    onSignedIn(user);
   } else {
     boot.hidden = true;
     appEl.hidden = true;
