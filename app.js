@@ -5,23 +5,24 @@ import {
   GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, deleteDoc,
-  collection, getDocs, writeBatch, Bytes,
+  getFirestore, doc, getDoc, setDoc,
 } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+import {
+  getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject,
+} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-storage.js";
 
-// Shares the lecture player's Firebase project (Blaze plan, so storage past the free 1 GiB is
-// billed instead of refused). One Video's data lives under oneVideo/ in its Firestore; the rules
-// for it are in ~/projects/lecture-player/firestore.rules.
+// Shares the lecture player's Firebase project (Blaze plan). The video file is in Firebase
+// Storage (oneVideo/<file>, one file, streamed by the browser); Firestore oneVideo/current holds
+// its details and download URL. Rules: ~/projects/lecture-player/{firestore,storage}.rules.
 const firebaseConfig = {
   apiKey: "AIzaSyDgEbqEwI9KHnFlBLRJ8RQIgdntISQPty0",
   authDomain: "lecture-player-d77815.firebaseapp.com",
   projectId: "lecture-player-d77815",
+  storageBucket: "lecture-player-d77815.firebasestorage.app",
   appId: "1:905522641482:web:f737cbe4b19eeead1a04b3",
 };
 
-// Firestore caps a document at 1 MiB; keep a safe margin for the field overhead.
-const CHUNK_BYTES = 900_000;
-const VIDEO_DOC = ["oneVideo", "current"]; // the single saved video
+const VIDEO_DOC = ["oneVideo", "current"]; // the single saved video's details
 
 // A named app keeps this sign-in separate from the lecture player's (same project and API key,
 // same origin), so signing out here doesn't sign the lecture player out.
@@ -31,6 +32,7 @@ const auth = initializeAuth(app, {
   popupRedirectResolver: browserPopupRedirectResolver,
 });
 const db = getFirestore(app);
+const storage = getStorage(app);
 
 // --- DOM ---
 const boot = document.getElementById("boot");
@@ -52,8 +54,8 @@ const progressBar = document.getElementById("progress-bar");
 const progressText = document.getElementById("progress-text");
 const errorEl = document.getElementById("error");
 
-let currentBlobUrl = null; // object URL of the playing blob, revoked when replaced
-let busy = false;          // uploading or downloading
+let currentBlobUrl = null; // object URL of a just-uploaded local file, revoked when replaced
+let busy = false;          // uploading
 let isOwner = false;       // Alex: may change the video. Others on the watch list only watch it.
 
 // --- time helpers (same as before) ---
@@ -95,13 +97,19 @@ function showProgress(text, frac) {
 }
 function hideProgress() { progress.hidden = true; progressBar.style.width = "0%"; }
 
-function showPlayer(blobUrl, startSeconds) {
-  if (currentBlobUrl && currentBlobUrl !== blobUrl) URL.revokeObjectURL(currentBlobUrl);
-  currentBlobUrl = blobUrl;
-  player.src = blobUrl;
+// src is the Storage download URL (the browser streams it with range requests, so playback
+// starts once the part around the start time has arrived), or a local object URL right after an
+// upload. The #t= media fragment makes the browser begin loading at the start time.
+function showPlayer(src, startSeconds) {
+  if (currentBlobUrl && currentBlobUrl !== src) URL.revokeObjectURL(currentBlobUrl);
+  currentBlobUrl = src.startsWith("blob:") ? src : null;
+  player.src = startSeconds > 0 ? `${src}#t=${startSeconds}` : src;
   if (startSeconds > 0) {
+    // Fallback for browsers that ignore the fragment.
     player.addEventListener("loadedmetadata", () => {
-      try { player.currentTime = startSeconds; } catch {}
+      if (player.currentTime < startSeconds - 1) {
+        try { player.currentTime = startSeconds; } catch {}
+      }
     }, { once: true });
   }
   playerWrap.hidden = false;
@@ -127,92 +135,47 @@ function showUploadForm(startSeconds) {
   clearError();
 }
 
-// --- Firestore storage ---
+// --- storage ---
 function videoDocRef() { return doc(db, ...VIDEO_DOC); }
-function chunksCol() { return collection(db, ...VIDEO_DOC, "chunks"); }
 
+// The doc is written only once the file is fully in Storage, so a doc without a url is the old
+// Firestore-chunk format (or broken): treated as "no usable video".
 async function loadSavedVideo() {
   const snap = await getDoc(videoDocRef());
   if (!snap.exists()) return null;
   const meta = snap.data();
-  if (!meta.done || !meta.chunks) return { meta, incomplete: true };
-  return { meta, incomplete: false };
+  return { meta, incomplete: !meta.url };
 }
 
-// Fetch all chunks and reassemble into a Blob.
-async function downloadVideo(meta) {
-  const total = meta.chunks;
-  const parts = new Array(total);
-  const CONCURRENCY = 4;
-  let fetched = 0;
-  let next = 0;
+const formatMB = (bytes) => `${(bytes / 1e6).toFixed(bytes < 1e7 ? 1 : 0)} MB`;
 
-  async function worker() {
-    while (next < total) {
-      const i = next++;
-      const id = String(i).padStart(6, "0");
-      const cSnap = await getDoc(doc(db, ...VIDEO_DOC, "chunks", id));
-      if (!cSnap.exists()) throw new Error(`missing chunk ${i}`);
-      parts[i] = cSnap.data().d.toUint8Array();
-      fetched++;
-      showProgress(`Loading video… ${fetched}/${total}`, fetched / total);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
-  hideProgress();
-  return new Blob(parts, { type: meta.type || "video/mp4" });
-}
-
-// Delete the old video doc + every chunk. One deleteDoc per chunk (batches cap at 10 MiB).
-async function deleteSavedVideo() {
-  const existing = await getDocs(chunksCol());
-  const CONCURRENCY = 8;
-  const docs = existing.docs;
-  let next = 0, done = 0;
-  async function worker() {
-    while (next < docs.length) {
-      const d = docs[next++];
-      await deleteDoc(d.ref);
-      done++;
-      showProgress(`Clearing old video… ${done}/${docs.length}`, done / docs.length);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, docs.length || 1) }, worker));
-  await deleteDoc(videoDocRef());
-}
-
-// Chunk a File and write it to Firestore.
+// Upload the file to Storage as one object, then point the Firestore doc at it, then delete the
+// previous file. A new name per upload means a cached copy of the old video is never reused.
 async function uploadVideo(file, startSeconds) {
-  const buf = new Uint8Array(await file.arrayBuffer());
-  const total = Math.max(1, Math.ceil(buf.length / CHUNK_BYTES));
+  const previous = (await loadSavedVideo())?.meta;
+  const safeName = file.name.replace(/[^\w.-]+/g, "_").slice(-80) || "video";
+  const path = `oneVideo/${Date.now()}-${safeName}`;
+  const type = file.type || "video/mp4";
+  const task = uploadBytesResumable(storageRef(storage, path), file, { contentType: type });
 
-  // Clear any previous video first so a partial old one can't linger.
-  showProgress("Preparing…", 0);
-  await deleteSavedVideo();
-
-  // Mark the doc not-done while writing, so an interrupted upload is detectable.
-  await setDoc(videoDocRef(), {
-    name: file.name,
-    type: file.type || "video/mp4",
-    size: buf.length,
-    chunks: total,
-    startSeconds: startSeconds || 0,
-    createdAt: Date.now(),
-    done: false,
+  showProgress(`Uploading… 0 of ${formatMB(file.size)}`, 0);
+  await new Promise((resolve, reject) => {
+    task.on("state_changed", (snap) => {
+      const frac = snap.totalBytes ? snap.bytesTransferred / snap.totalBytes : 0;
+      showProgress(`Uploading… ${formatMB(snap.bytesTransferred)} of ${formatMB(snap.totalBytes)} (${Math.round(frac * 100)}%)`, frac);
+    }, reject, resolve);
   });
 
-  let written = 0;
-  for (let i = 0; i < total; i++) {
-    const slice = buf.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES);
-    const id = String(i).padStart(6, "0");
-    await setDoc(doc(db, ...VIDEO_DOC, "chunks", id), { d: Bytes.fromUint8Array(slice) });
-    written++;
-    showProgress(`Uploading… ${written}/${total}`, written / total);
-  }
+  const url = await getDownloadURL(task.snapshot.ref);
+  await setDoc(videoDocRef(), {
+    name: file.name, type, size: file.size, path, url,
+    startSeconds: startSeconds || 0, createdAt: Date.now(), done: true,
+  });
 
-  await setDoc(videoDocRef(), { done: true }, { merge: true });
+  if (previous?.path && previous.path !== path) {
+    await deleteObject(storageRef(storage, previous.path)).catch((err) => console.warn("old video not deleted:", err));
+  }
   hideProgress();
-  return new Blob([buf], { type: file.type || "video/mp4" });
 }
 
 // --- events ---
@@ -238,8 +201,9 @@ form.addEventListener("submit", async (e) => {
   busy = true;
   saveBtn.disabled = true;
   try {
-    const blob = await uploadVideo(file, startSeconds);
-    showPlayer(URL.createObjectURL(blob), startSeconds);
+    await uploadVideo(file, startSeconds);
+    // Play the local file straight away; the next open streams it from Storage.
+    showPlayer(URL.createObjectURL(file), startSeconds);
   } catch (err) {
     console.error(err);
     showError("Upload failed: " + (err?.message || err));
@@ -303,22 +267,16 @@ async function onSignedIn(user) {
   if (!isOwner) {
     if (saved instanceof Error) { showWatcherEmpty("Couldn't load the video: " + (saved.message || saved)); return; }
     if (!saved || saved.incomplete) { showWatcherEmpty("There's no video to watch yet."); return; }
-    try {
-      showPlayer(URL.createObjectURL(await downloadVideo(saved.meta)), saved.meta.startSeconds || 0);
-    } catch (err) {
-      console.error(err);
-      showError("Couldn't load the video: " + (err?.message || err));
-    }
+    showPlayer(saved.meta.url, saved.meta.startSeconds || 0);
     return;
   }
   try {
     if (saved instanceof Error) throw saved;
     if (saved && !saved.incomplete) {
-      const blob = await downloadVideo(saved.meta);
-      showPlayer(URL.createObjectURL(blob), saved.meta.startSeconds || 0);
+      showPlayer(saved.meta.url, saved.meta.startSeconds || 0);
     } else if (saved && saved.incomplete) {
       showUploadForm(saved.meta.startSeconds || 0);
-      showError("The last upload didn't finish. Please choose the video again.");
+      showError("The saved video needs uploading again. Please choose it below.");
     } else {
       showUploadForm(0);
     }
