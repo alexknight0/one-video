@@ -22,24 +22,45 @@
     <button id="change-btn" type="button" class="change-btn" hidden>Change video</button>
   </header>
 
-  <main>
+  <!-- Shown while sign-in is being checked; CSS reveals the "taking a while" line after 10s. -->
+  <section id="boot" class="centre">
+    <div class="spinner"></div>
+    <p>Checking sign-in…</p>
+    <p id="boot-slow" class="muted">This is taking a while. <a href="">Reload</a></p>
+  </section>
+
+  <!-- Sign-in gate (One Video is Alex-only). -->
+  <section id="gate" class="centre" hidden>
+    <p id="gate-msg">Sign in to upload and watch your video.</p>
+    <button id="signin-btn" type="button" class="primary">Sign in with Google</button>
+  </section>
+
+  <main id="app" hidden>
     <div id="player-wrap" hidden>
       <div class="ratio">
-        <iframe id="player" src="" title="Video player"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+        <video id="player" playsinline controls></video>
       </div>
     </div>
 
-    <p id="empty" class="empty">No video saved yet. Paste a YouTube URL below.</p>
+    <p id="empty" class="empty">No video yet. Choose a video file below.</p>
 
-    <form id="url-form" class="dock" hidden>
-      <input id="url-input" type="url" inputmode="url" autocomplete="off"
-        placeholder="Paste a YouTube URL…" aria-label="YouTube URL">
+    <!-- Upload / change form -->
+    <form id="upload-form" class="dock" hidden>
+      <label class="pick">
+        <span id="pick-label">Choose a video…</span>
+        <input id="file-input" type="file" accept="video/*" hidden>
+      </label>
       <input id="time-input" type="text" inputmode="numeric" autocomplete="off"
         placeholder="Start (0:00)" aria-label="Start time" class="time">
-      <button type="submit">Save</button>
+      <button type="submit" id="save-btn">Save</button>
     </form>
+
+    <!-- Upload / download progress -->
+    <div id="progress" class="progress" hidden>
+      <div id="progress-bar"></div>
+      <span id="progress-text"></span>
+    </div>
+
     <p id="error" class="error" hidden></p>
   </main>
 
