@@ -1,0 +1,15 @@
+# One Video's Worker (see src/index.js). Deploy: npx wrangler deploy (from this folder).
+# Secret: SIGNING_KEY (npx wrangler secret put SIGNING_KEY), signs the playback links.
+name = "one-video"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+preview_urls = false
+
+[vars]
+# Firestore REST for the lecture-player project, which holds One Video's doc and access list.
+FIRESTORE_BASE = "https://firestore.googleapis.com/v1/projects/lecture-player-d77815/databases/(default)/documents"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "one-video"
